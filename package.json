@@ -1,0 +1,25 @@
+{
+  "name": "wa-translator-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Translator Bot",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "axios": "^1.6.0",
+    "ffmpeg-static": "^5.2.0",
+    "pino": "^8.16.0",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.32.6",
+    "node-fetch": "^3.3.2",
+    "h56-translator": "^1.0.6",
+    "wa-sticker-formatter": "^3.0.0",
+    "mediafire": "^1.0.0"
+  }
+}

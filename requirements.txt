@@ -1,0 +1,4 @@
+# Python runtime requirements for bot's downloader scripts
+# - yt-dlp is required by tiktok.py and youtube.py
+# - ffmpeg is required as a system binary (install via OS package manager; not a pip package)
+yt-dlp>=2026.2.4
