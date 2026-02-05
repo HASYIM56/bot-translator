@@ -26,6 +26,8 @@ import registerMediafire from "./mediafire.js"
 import startRealtimeBioUpdater from "./realtime-bio.js"
 // Github Saerch Handler
 import githubSearchHandler from "./handlers/githubSearch.js"
+// urltopdf Handler
+import urlToPdfHandler from "./handlers/urlToPdf.js"
 
 // ======================
 // SYSTEM CONFIG
@@ -2232,6 +2234,30 @@ if (cmd === ".author") {
         },
         { quoted: msg },
       )
+    } catch (_) {}
+  }
+  return
+}
+
+if (cmd === ".urltopdf") {
+  try {
+    const argsText = args.slice(1).join(" ").trim()
+    await urlToPdfHandler(sock, msg, argsText, {
+      API_ENDPOINT: "https://h56-pdf-tools-api.netlify.app/api/url-to-pdf",
+      TEMP_FOLDER: QRCODE_FOLDER,
+      MAX_UPLOAD_SIZE: 100 * 1024 * 1024, // 100 MB
+      encodeUnicodeText,
+      getAccessMode: () => BOT_ACCESS_MODE,
+      isUserOwner,
+      normalizeNumber,
+      OWNER_NUMBER,
+      logger,
+      timeoutMs: 30_000,
+    })
+  } catch (e) {
+    console.error("[URLTOPDF CMD] Error:", e?.message || e)
+    try {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Terjadi kesalahan saat memproses .urltopdf.") }, { quoted: msg })
     } catch (_) {}
   }
   return

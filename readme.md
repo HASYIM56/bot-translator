@@ -134,6 +134,7 @@ Daftar lengkap perintah / fitur (berdasarkan source code):
 - .addmember <nomor> — Tambah member via nomor (Owner)
 - .qrcode <url/teks> — Generate QR code (menggunakan API eksternal, simpan di /HASYIM56/qrcode)
 - .viewonce — Recover media view-once (reply view-once message)
+-  .urltopdf [detail](#detail-fitur:-.urltopdf-konversi-url-→-pdf)
 - .ttdownload <url> [resolusi] — Download TikTok (menggunakan tiktok.py / yt-dlp) — private chat only
 - .ttsearch <username> — Cari pengguna TikTok (via module tiktok.js)
 - .fwd on/off — Forward Many Times Mode (Owner Utama)
@@ -231,26 +232,60 @@ Privasi & etika
 - Fitur ini melakukan scraping terhadap profil publik GitHub. Pastikan penggunaan mematuhi ketentuan layanan GitHub.
 - Hindari penggunaan berulang (mass scraping) yang dapat menyebabkan pemblokiran IP atau tindakan rate-limiting.
 
-Integrasi & lokasi penambahan
-- Tambahkan bagian dokumentasi ini ke README.md di bawah bagian "Commands" atau "Features".
-- Jika README sudah memiliki daftar perintah, cari header atau bagian yang membahas perintah-perintah (mis. "Commands", "Daftar Perintah", atau "Fitur") dan sisipkan teks ini sebagai sub-bagian berjudul "GitHub Search (.githubsearch)".
-- Jika tidak ada section yang sesuai, tambahkan di akhir file README.md sebagai bagian baru bernama:
-  ```markdown
-  ## Fitur: .githubsearch <username>
-  ```
-  (Gunakan langsung teks di atas — seluruh blok ini adalah konten yang harus ditambahkan.)
-
-Versi ringkas untuk disisipkan (copy-paste)
-- Jika Anda ingin hanya menempel blok ringkas ke README di bawah "Commands", gunakan bagian berikut (mulai dari "### GitHub Search (.githubsearch)" sampai "Contoh penggunaan"):
-  ```markdown
-  ### GitHub Search (.githubsearch)
-  - Perintah: `.githubsearch <username>`
-  - Mengambil ringkasan profil publik GitHub (nama, bio, lokasi, repos, followers, following, top repos).
-  - Contoh: `.githubsearch torvalds`
-  ```
-
 
 Catatan: beberapa perintah hanya dapat dijalankan oleh Owner Utama (nomor yang ditentukan di index.js sebagai OWNER_NUMBER) atau akun terdaftar di config/owners.json.
+
+---
+
+## Detail Fitur: .urltopdf Konversi URL → PDF
+
+Perintah: `.urltopdf <url> [opsi]`  
+Contoh:
+- `.urltopdf https://example.com`
+- `.urltopdf https://example.com filename=laporan.pdf format=Letter landscape=true margin=10,10,10,10`
+
+Ringkasan
+- Mengonversi halaman web (URL) menjadi file PDF lalu mengirimkannya sebagai dokumen lewat WhatsApp.
+- Handler ada di `handlers/urlToPdf.js`.
+- Dirancang agar ramah pengguna: memberikan notifikasi start, pengecekan ukuran, dan feedback error yang informatif.
+
+Endpoint API yang digunakan
+- Default API endpoint: `https://h56-pdf-tools-api.netlify.app/api/url-to-pdf`
+  - Handler mengirim POST JSON berisi: `{ url, filename, format, landscape, margin? }`
+  - API diharapkan merespon dengan konten PDF (Content-Type: application/pdf) atau JSON error.
+  - Timeout permintaan default pada bot: 30 detik (dapat diubah lewat opsi).
+
+Opsi yang didukung pada perintah
+- `filename=<nama.pdf>` — Nama file PDF yang akan dikirim (sintaks: tanpa spasi/karakter ilegal; bot akan men-sanitize).
+- `format=<A4|Letter|...>` — Tipe kertas; default `A4`.
+- `landscape=true|false` — Orientasi; default `false` (portrait).
+- `margin=top,right,bottom,left` — Margin dalam mm; contoh: `margin=10,10,10,10`
+
+Alur kerja singkat
+1. Bot memvalidasi URL (harus `http://` atau `https://`).
+2. Bot mengirim permintaan ke API dengan payload sesuai opsi.
+3. Bot menerima hasil:
+   - Jika API mengembalikan PDF: bot membaca body sebagai bytes, memeriksa ukuran vs batas upload (default 100 MB), lalu mengirim PDF sebagai dokumen.
+   - Jika API mengembalikan JSON error atau status non-200: bot menampilkan pesan error yang informatif.
+4. File sementara disimpan di folder temp yang dikonfigurasi (`os.tmpdir()` default) dan dihapus setelah pengiriman.
+
+Batas ukuran & waktu
+- Batas upload WhatsApp di-batasi oleh bot ke 100 MB secara default (konfigurasi: `MAX_UPLOAD_SIZE` di handler).
+- Permintaan ke API diproteksi dengan timeout (default 30s); jika API lambat, perintah akan membatalkan dan memberi tahu pengguna.
+
+Pesan & kesalahan umum
+- `URL tidak valid`: URL tidak diawali `http(s)://`.
+- `Layanan konversi mengembalikan error: HTTP <kode>`: API mengembalikan error HTTP/JSON.
+- `File PDF terlalu besar`: hasil konversi melebihi batas yang dapat dikirim lewat WhatsApp.
+- `Request timeout saat menghubungi layanan konversi PDF.`: API tidak merespon dalam batas waktu.
+
+Rekomendasi & operasi lanjutan
+- Jika API publik tidak andal, Anda dapat mengganti `API_ENDPOINT` pada pemanggilan handler (lihat pemanggilan dari `index.js`) atau menjalankan service sendiri yang menerima payload `{url, filename, format, landscape, margin}` dan mengembalikan PDF bytes.
+- Untuk server produksi, pastikan service API dapat menangani rendering (headless browser / wkhtmltopdf / puppeteer) dan mengatur limit memory/cpu sesuai kebutuhan.
+- Jika ingin menyesuaikan timeout atau ukuran maksimum, ubah opsi yang dikirim ke `urlToPdfHandler` pada `index.js`.
+
+Link cepat
+- Untuk daftar dependensi (npm & pip) yang dibutuhkan oleh proyek, lihat: [Click here for full dependencies](./instalasi.md)
 
 ---
 
