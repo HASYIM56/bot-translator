@@ -10,7 +10,6 @@ const ensureFolder = (p) => {
   try {
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
   } catch (e) {
-    // best-effort
   }
 }
 
