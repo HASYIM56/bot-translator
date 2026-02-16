@@ -6431,8 +6431,9 @@ sock.ev.on("messages.upsert", async ({ messages, type }) => {
 
 const SESSION_LOCK_FILE = path.join(SESSION_FOLDER, ".session-lock.json")
 const SESSION_ARCHIVE_ROOT = path.resolve(path.join(path.dirname(SESSION_FOLDER), "session_archives"))
-// How old a session must be before we consider it stale and archive it (default: 7 days)
-const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+// How old a session must be before we consider it stale and archive it (default: 1 day)
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 1 day
+
 // If lock file is older than this, consider it stale (default: 1 day)
 const SESSION_LOCK_TTL_MS = 24 * 60 * 60 * 1000 // 1 day
 // Maximum attempts to acquire lock before failing fast

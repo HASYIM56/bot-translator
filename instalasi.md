@@ -93,5 +93,3 @@ apk add --no-cache ffmpeg python3 py3-pip build-base vips-dev
    ```bash
    npm start
    ```
-
-Jika butuh saya dapat menambahkan skrip Dockerfile / docker-compose yang menggabungkan seluruh dependensi sistem + npm + pip agar lebih mudah deploy.
