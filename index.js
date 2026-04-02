@@ -1899,6 +1899,44 @@ try {
         return
       }
       
+      // ===============================
+// GET GROUP LINK - .getlinkgroup
+// ===============================
+if (cmd === ".getlinkgroup") {
+  if (!isGroup) {
+    await sock.sendMessage(from, { text: encodeUnicodeText("Perintah ini hanya bisa digunakan di grup.") }, { quoted: msg })
+    return
+  }
+
+  const botAdminStatus = await isBotAdmin(sock, from)
+  if (!botAdminStatus) {
+    await sock.sendMessage(from, { text: encodeUnicodeText("Bot harus menjadi admin grup untuk mengambil link grup.") }, { quoted: msg })
+    return
+  }
+
+  try {
+    const inviteCode = await sock.groupInviteCode(from)
+    const groupLink = `https://chat.whatsapp.com/${inviteCode}`
+
+    await sock.sendMessage(from, {
+      text: encodeUnicodeText(
+        `🔗 Link Grup:\n\n${groupLink}\n\n` +
+        `📌 Link ini dapat dibagikan kepada pengguna untuk bergabung dengan grup.`
+      ),
+    }, { quoted: msg })
+
+    console.log(`[GROUP LINK] Retrieved for group ${from} by ${senderNumber}`)
+  } catch (err) {
+    console.error("[GROUP LINK] Error:", err?.message || err)
+    await sock.sendMessage(from, {
+      text: encodeUnicodeText(
+        "❌ Gagal mengambil link grup. Pastikan bot adalah admin dan coba lagi."
+      ),
+    }, { quoted: msg })
+  }
+  return
+}
+      
       // === START ADD: .spamreport (Only Owner Utama) ===
 // Insert this block immediately AFTER the existing if (cmd === ".spam") { ... } return block
 // Usage:
@@ -3872,8 +3910,7 @@ if (cmd === ".audiotovn") {
         return
       }
 
-      // ===============================
-      // VIEW-ONCE RECOVERY - .viewonce (NEW ADDITION)
+      // VIEW-ONCE RECOVERY - .viewonce
 if (cmd === ".viewonce") {
   try {
     const context = msg.message?.extendedTextMessage?.contextInfo
@@ -4147,6 +4184,177 @@ if (cmd === ".viewonce") {
     await sock.sendMessage(from, { text: encodeUnicodeText(`Gagal memproses .viewonce. Error: ${err?.message || err}`) }, { quoted: msg })
   }
   return
+}
+
+// CREATE VIEW ONCE .createviewonce
+//
+// Mengubah media gambar/video menjadi media "sekali lihat" (viewOnce)
+// Usage: reply media dengan caption .createviewonce
+// Fitur: convert image/video ke viewOnce format WhatsApp
+if (cmd === ".createviewonce") {
+  try {
+    // Extract context dari quoted message
+    const quotedContext = msg.message?.extendedTextMessage?.contextInfo
+    if (!quotedContext || !quotedContext.quotedMessage) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "Format: Reply media (gambar atau video) dengan caption: .createviewonce\n\n" +
+          "Catatan: Hanya gambar (JPEG/PNG/WEBP) dan video (MP4/MKV) yang didukung.\n" +
+          "Audio dan voice note tidak didukung WhatsApp view-once feature."
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    const quotedMessage = quotedContext.quotedMessage
+    const mediaTypeKey = Object.keys(quotedMessage)[0]
+
+    // Validasi: hanya image dan video yang didukung
+    if (mediaTypeKey !== "imageMessage" && mediaTypeKey !== "videoMessage") {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          `❌ Tipe media tidak didukung.\n\n` +
+          `Format "${mediaTypeKey.replace("Message", "")}" tidak dapat dijadikan view-once.\n` +
+          `Gunakan gambar (image) atau video (video) saja.`
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    // Inform user
+    await sock.sendMessage(from, {
+      text: encodeUnicodeText("⏳ Mengonversi media menjadi view-once — mohon tunggu..."),
+    }, { quoted: msg })
+
+    // Determine download type
+    const downloadType = mediaTypeKey === "imageMessage" ? "image" : "video"
+    const mediaNode = quotedMessage[mediaTypeKey]
+
+    // Build canonical quoted object for download
+    const quotedKey = {
+      remoteJid: from,
+      id: quotedContext?.stanzaId || quotedContext?.id || msg.key.id,
+      participant: quotedContext?.participant || undefined,
+      fromMe: false,
+    }
+    const fullQuotedObj = { key: quotedKey, message: quotedMessage }
+
+    // Attempt download with multiple fallback strategies
+    const downloadAttempts = [
+      () => downloadContentFromMessage(mediaNode, downloadType),
+      () => downloadContentFromMessage(quotedMessage, downloadType),
+      () => downloadContentFromMessage(fullQuotedObj, downloadType),
+    ]
+
+    let stream = null
+    const errors = []
+    for (const attemptFn of downloadAttempts) {
+      try {
+        stream = await attemptFn()
+        if (stream) break
+      } catch (e) {
+        errors.push(e?.message || String(e))
+      }
+    }
+
+    if (!stream) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "❌ Gagal mengunduh media dari pesan yang direply.\n\n" +
+          "Kemungkinan penyebab:\n" +
+          "• Media sudah dihapus pengirim\n" +
+          "• Media tidak dapat diakses\n" +
+          "• Format media tidak valid"
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    // Concatenate stream ke buffer
+    let mediaBuffer = Buffer.from([])
+    try {
+      for await (const chunk of stream) {
+        mediaBuffer = Buffer.concat([mediaBuffer, chunk])
+      }
+    } catch (e) {
+      console.error("[CREATEVIEWONCE] Error reading stream:", e?.message || e)
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "❌ Gagal membaca konten media setelah diunduh.\n" +
+          "Coba lagi atau gunakan media lain."
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    if (!mediaBuffer || mediaBuffer.length === 0) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText("❌ Konten media kosong atau tidak dapat dibaca."),
+      }, { quoted: msg })
+      return
+    }
+
+    // Extract metadata
+    const mediaMime = mediaNode?.mimetype || (downloadType === "image" ? "image/jpeg" : "video/mp4")
+    const caption = mediaNode?.caption || "Media sekali lihat"
+
+    // Build send payload dengan viewOnce: true
+    const sendPayload = {
+      viewOnce: true,
+    }
+
+    if (mediaTypeKey === "imageMessage") {
+      sendPayload.image = mediaBuffer
+    } else if (mediaTypeKey === "videoMessage") {
+      sendPayload.video = mediaBuffer
+    }
+
+    // Optional: add caption jika ada
+    if (caption && typeof caption === "string" && caption.trim()) {
+      sendPayload.caption = encodeUnicodeText(caption)
+    }
+
+    // Send view-once media
+    try {
+      await sock.sendMessage(from, sendPayload, { quoted: msg })
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          `✅ Media berhasil dikonversi menjadi ${
+            mediaTypeKey === "imageMessage" ? "gambar" : "video"
+          } sekali lihat.\n\n` +
+          `📌 Catatan:\n` +
+          `• Media akan hilang setelah dilihat\n` +
+          `• Penerima tidak bisa menyimpan media ini\n` +
+          `• Screenshot akan memberitahu pengirim`
+        ),
+      }, { quoted: msg })
+
+      console.log(
+        `[CREATEVIEWONCE] Converted ${mediaTypeKey} to view-once for ${from} by ${senderNumber}`
+      )
+    } catch (sendErr) {
+      console.error("[CREATEVIEWONCE] Failed to send view-once media:", sendErr?.message || sendErr)
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          `❌ Gagal mengirim media view-once.\n\n` +
+          `Error: ${sendErr?.message || sendErr}`
+        ),
+      }, { quoted: msg })
+    }
+
+    return
+  } catch (err) {
+    console.error("[CREATEVIEWONCE] Handler error:", err?.message || err)
+    try {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          `❌ Terjadi kesalahan saat memproses .createviewonce.\n\n` +
+          `Error: ${err?.message || err}`
+        ),
+      }, { quoted: msg })
+    } catch (_) {}
+    return
+  }
 }
 
       // ===============================
