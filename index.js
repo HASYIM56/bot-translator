@@ -2167,6 +2167,7 @@ ${prefixInfo}
 
 🎨 Stiker & Media
 • .stiker (reply gambar)    — Ubah gambar menjadi stiker (format: JPEG/PNG/WEBP)
+• .stikerv2 (reply gif/video)    — Ubah gif/video menjadi stiker bergerak (format: GIF/MP4)
 • .qrcode <url/teks>        — Generate QR Code (dikirim sebagai gambar)
 • .audiotovn (reply audio)  — Konversi audio menjadi Voice Note (OGG/OPUS) — file disimpan: /HASYIM56/audio
 • .mediafire <url>          — Download file MediaFire — file disimpan: /HASYIM56/mediafire
@@ -3575,8 +3576,284 @@ if (cmd === ".stiker") {
   return
 }
 
-      // ===============================
-      // AUDIO TO VOICE NOTE - .audiotovn (NEW)
+// 
+// STICKER V2 - VIDEO/GIF TO ANIMATED STICKER
+
+if (cmd === ".stikerv2") {
+  try {
+    const quotedMsg = getQuoted()
+    const quoted = quotedMsg?.message
+
+    // Tentukan media type: videoMessage atau dokumentMessage (GIF)
+    const videoMsg = quoted?.videoMessage
+    const docMsg = quoted?.documentMessage
+    const isGifDocument = docMsg && typeof docMsg.mimetype === "string" && (docMsg.mimetype.includes("gif") || docMsg.mimetype.includes("image/gif"))
+    const isVideoOrGif = videoMsg || isGifDocument
+
+    if (!quoted || !isVideoOrGif) {
+      await sock.sendMessage(
+        from,
+        {
+          text: encodeUnicodeText(
+            "Format salah. Reply video atau GIF dengan caption .stikerv2 untuk membuat stiker bergerak.\n\nCara penggunaan:\n1. Balas video/GIF\n2. Berikan caption: .stikerv2\n\nTips: Video/GIF akan diubah menjadi stiker bergerak (animated WebP) dengan label HASYIM56.",
+          ),
+        },
+        { quoted: msg },
+      )
+      return
+    }
+
+    await sock.sendMessage(from, { text: encodeUnicodeText("⏳ Sedang memproses video/GIF menjadi stiker...") }, { quoted: msg })
+
+    // Download stream
+    let stream
+    if (videoMsg) {
+      stream = await downloadContentFromMessage(quoted.videoMessage, "video")
+    } else {
+      stream = await downloadContentFromMessage(quoted.documentMessage, "document")
+    }
+
+    let buffer = Buffer.from([])
+    for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk])
+
+    if (!buffer || buffer.length === 0) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Gagal mengunduh video/GIF. Silakan coba lagi.") }, { quoted: msg })
+      return
+    }
+
+    // Ensure sticker folder exists
+    try {
+      if (!fs.existsSync(STICKER_FOLDER)) fs.mkdirSync(STICKER_FOLDER, { recursive: true })
+    } catch (e) {
+      console.warn("[STIKERV2] Could not ensure sticker folder:", e?.message || e)
+    }
+
+    // Generate unique temp filenames
+    const timestamp = Date.now()
+    const randomSuffix = Math.random().toString(36).substring(7)
+    const inputPath = path.join(STICKER_FOLDER, `stikerv2_in_${timestamp}_${randomSuffix}.mp4`)
+    const outputPath = path.join(STICKER_FOLDER, `stikerv2_out_${timestamp}_${randomSuffix}.webp`)
+    const ffmpegWebpPath = path.join(STICKER_FOLDER, `stikerv2_ffmpeg_${timestamp}_${randomSuffix}.webp`)
+
+    try {
+      fs.writeFileSync(inputPath, buffer, { encoding: null })
+    } catch (e) {
+      console.error("[STIKERV2] Failed to write input file:", e?.message || e)
+      await sock.sendMessage(from, { text: encodeUnicodeText("Gagal menyimpan file sementara. Coba lagi nanti.") }, { quoted: msg })
+      return
+    }
+
+    // Verify input file exists
+    if (!fs.existsSync(inputPath)) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Gagal menyiapkan file sementara untuk konversi.") }, { quoted: msg })
+      return
+    }
+
+    // FFmpeg conversion dengan ffmpeg-static (robust)
+    // Output ke WebP animated
+    const convertError = await new Promise((resolve) => {
+      let ffCommand
+      try {
+        ffCommand = spawn(ffmpegPath, [
+          "-y",
+          "-i",
+          inputPath,
+          "-vf",
+          "scale=512:512:force_original_aspect_ratio=decrease,fps=10",
+          "-loop",
+          "0",
+          "-preset",
+          "default",
+          "-an",
+          "-vsync",
+          "0",
+          ffmpegWebpPath,
+        ], { stdio: ["ignore", "pipe", "pipe"] })
+      } catch (spawnErr) {
+        // Cleanup input file
+        try {
+          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath)
+        } catch (_) {}
+        return resolve(new Error(`ffmpeg start failed: ${spawnErr.message}`))
+      }
+
+      let stderr = ""
+      ffCommand.stderr.on("data", (c) => {
+        stderr += c.toString()
+      })
+
+      ffCommand.on("error", (err) => {
+        try {
+          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath)
+        } catch (_) {}
+        resolve(err)
+      })
+
+      ffCommand.on("close", (code) => {
+        if (code !== 0) {
+          // Cleanup both files
+          try {
+            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath)
+          } catch (_) {}
+          try {
+            if (fs.existsSync(ffmpegWebpPath)) fs.unlinkSync(ffmpegWebpPath)
+          } catch (_) {}
+          return resolve(new Error(`ffmpeg exited with code ${code}. stderr: ${stderr.trim().split("\n").slice(-6).join("\n")}`))
+        }
+        return resolve(null)
+      })
+    })
+
+    
+    try {
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath)
+    } catch (_) {}
+
+    if (convertError) {
+      console.error("[STIKERV2] FFmpeg conversion failed:", convertError?.message || convertError)
+      const friendly =
+        convertError.message && convertError.message.toLowerCase().includes("ffmpeg")
+          ? "Gagal mengonversi video/GIF karena ffmpeg tidak tersedia atau gagal dijalankan. Pastikan ffmpeg terpasang di server."
+          : `Gagal mengonversi video/GIF. Error: ${convertError.message || convertError}`
+
+      await sock.sendMessage(from, { text: encodeUnicodeText(friendly) }, { quoted: msg })
+      return
+    }
+
+    // Verify ffmpeg output file exists
+    if (!fs.existsSync(ffmpegWebpPath)) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Gagal menghasilkan stiker bergerak. Coba lagi nanti.") }, { quoted: msg })
+      return
+    }
+
+    // Read ffmpeg converted WebP
+    let stickerBuffer = null
+    try {
+      stickerBuffer = fs.readFileSync(ffmpegWebpPath)
+    } catch (e) {
+      console.error("[STIKERV2] Failed to read ffmpeg webp:", e?.message || e)
+      await sock.sendMessage(from, { text: encodeUnicodeText("Gagal membaca hasil konversi stiker. Coba lagi nanti.") }, { quoted: msg })
+      try {
+        if (fs.existsSync(ffmpegWebpPath)) fs.unlinkSync(ffmpegWebpPath)
+      } catch (_) {}
+      return
+    }
+
+    if (!stickerBuffer || stickerBuffer.length === 0) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Hasil konversi stiker kosong atau tidak valid.") }, { quoted: msg })
+      try {
+        if (fs.existsSync(ffmpegWebpPath)) fs.unlinkSync(ffmpegWebpPath)
+      } catch (_) {}
+      return
+    }
+
+    
+    let finalStickerBuffer = stickerBuffer
+    let usedFormatter = false
+    try {
+      const mod = await import("wa-sticker-formatter")
+      const StickerClass = mod?.Sticker || mod?.default || mod
+      if (typeof StickerClass === "function") {
+        try {
+          const stickerObj = new StickerClass(stickerBuffer, {
+            pack: STICKER_PACK_NAME || "H56 Animated Sticker",
+            author: STICKER_AUTHOR || "HASYIM56",
+            type: "full", 
+            quality: 90,
+          })
+          // toBuffer() returns Buffer or Promise<Buffer>
+          const result = await stickerObj.toBuffer()
+          if (result && result.length > 0) {
+            finalStickerBuffer = result
+            usedFormatter = true
+            console.log("[STIKERV2] Applied wa-sticker-formatter with pack name and author")
+          }
+        } catch (formatterErr) {
+          console.warn("[STIKERV2] wa-sticker-formatter processing failed (will use original):", formatterErr?.message || formatterErr)
+          // fallback: use stickerBuffer as-is
+        }
+      }
+    } catch (modErr) {
+      console.warn("[STIKERV2] wa-sticker-formatter not available (will use original webp):", modErr?.message || modErr)
+      // fallback: send as-is
+    }
+
+    // Send sticker
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          sticker: finalStickerBuffer,
+        },
+        {
+          quoted: msg,
+        },
+      )
+
+      console.log(`[STIKERV2] Animated sticker sent successfully — size: ${finalStickerBuffer.length} bytes, formatter: ${usedFormatter}`)
+      await sock.sendMessage(from, { text: encodeUnicodeText("✅ Stiker berhasil dibuat!") }, { quoted: msg })
+    } catch (sendErr) {
+      console.error("[STIKERV2] Failed to send sticker:", sendErr?.message || sendErr)
+      
+      // Fallback: if wa-sticker-formatter was used and failed, retry with original ffmpeg output
+      if (usedFormatter) {
+        try {
+          console.log("[STIKERV2] Retrying with original ffmpeg output (fallback)")
+          await sock.sendMessage(
+            from,
+            {
+              sticker: stickerBuffer,
+            },
+            {
+              quoted: msg,
+            },
+          )
+          await sock.sendMessage(from, { text: encodeUnicodeText("✅ Stiker bergerak berhasil") }, { quoted: msg })
+        } catch (fallbackErr) {
+          console.error("[STIKERV2] Fallback send also failed:", fallbackErr?.message || fallbackErr)
+          await sock.sendMessage(
+            from,
+            {
+              text: encodeUnicodeText(`Gagal mengirim stiker bergerak. Error: ${fallbackErr?.message || fallbackErr}`),
+            },
+            { quoted: msg },
+          )
+        }
+      } else {
+        await sock.sendMessage(
+          from,
+          {
+            text: encodeUnicodeText(`Gagal mengirim stiker bergerak. Error: ${sendErr?.message || sendErr}`),
+          },
+          { quoted: msg },
+        )
+      }
+    } finally {
+      // Cleanup all temp files
+      try {
+        if (fs.existsSync(ffmpegWebpPath)) fs.unlinkSync(ffmpegWebpPath)
+      } catch (_) {}
+      try {
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath)
+      } catch (_) {}
+    }
+  } catch (err) {
+    console.error("[STIKERV2] Error:", err?.message || err)
+    try {
+      await sock.sendMessage(
+        from,
+        {
+          text: encodeUnicodeText(`Terjadi kesalahan saat memproses .stikerv2. Error: ${err?.message || err}`),
+        },
+        { quoted: msg },
+      )
+    } catch (_) {}
+  }
+  return
+}
+
+      //
+      // AUDIO TO VOICE NOTE - .audiotovn
       // Usage: reply an audio message with caption .audiotovn
       // Files stored in permanent folder: /HASYIM56/audio
 if (cmd === ".audiotovn") {
