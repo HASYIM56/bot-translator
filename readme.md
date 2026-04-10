@@ -134,6 +134,7 @@ Daftar lengkap perintah / fitur (berdasarkan source code):
 - .addmember <nomor> — Tambah member via nomor (Owner)
 - .qrcode <url/teks> — Generate QR code (menggunakan API eksternal, simpan di /HASYIM56/qrcode)
 - .viewonce — Recover media view-once (reply view-once message)
+- .createviewonce — take photo media data in view-once form and re-send it by the bot as view-once media (reply view-once message)  
 -  .urltopdf [detail](#detail-fitur:-.urltopdf-konversi-url-→-pdf)
 - .ttdownload <url> [resolusi] — Download TikTok (menggunakan tiktok.py / yt-dlp) — private chat only
 - .ttsearch <username> — Cari pengguna TikTok (via module tiktok.js)
