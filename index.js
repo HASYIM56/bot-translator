@@ -24,7 +24,7 @@ import registerBlock from "./block.js"
 import registerMediafire from "./mediafire.js"
 // Tambahkan pada bagian import (di dekat import lain)
 import startRealtimeBioUpdater from "./realtime-bio.js"
-// Github Saerch Handler
+// Github Search Handler
 import githubSearchHandler from "./handlers/githubSearch.js"
 // urltopdf Handler
 import urlToPdfHandler from "./handlers/urlToPdf.js"
@@ -3431,6 +3431,148 @@ if (cmd === ".setpppanjang") {
         }
         return
       }
+      
+
+// SAVE STATUS - .savestatus
+if (cmd === ".savestatus") {
+  try {
+    // Ambil context dari reply
+    const quotedContext = msg.message?.extendedTextMessage?.contextInfo
+    if (!quotedContext || !quotedContext.quotedMessage) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Format: Reply pesan status dengan caption .savestatus") }, { quoted: msg })
+      return
+    }
+
+    const quotedMessage = quotedContext.quotedMessage
+
+    // Deteksi tipe media (image, video, document)
+    const mediaType = Object.keys(quotedMessage)[0]
+    const supportedTypes = ["imageMessage", "videoMessage", "documentMessage"]
+
+    if (!supportedTypes.includes(mediaType)) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Tipe media tidak didukung. Gunakan gambar atau video dari status.") }, { quoted: msg })
+      return
+    }
+
+    // Tentukan folder penyimpanan
+    const statusFolder = path.join(BASE_MEDIA_DIR, "status")
+    try {
+      if (!fs.existsSync(statusFolder)) fs.mkdirSync(statusFolder, { recursive: true })
+    } catch (e) {
+      console.warn("[SAVESTATUS] Could not ensure status folder:", e?.message || e)
+    }
+
+    // Notify user
+    await sock.sendMessage(from, { text: encodeUnicodeText("⏳ Mengunduh media status...") }, { quoted: msg })
+
+    // Download stream
+    let stream = null
+    const downloadType = mediaType === "imageMessage" ? "image" : (mediaType === "videoMessage" ? "video" : "document")
+
+    try {
+      // Attempt download dengan multiple fallback
+      try {
+        stream = await downloadContentFromMessage(quotedMessage[mediaType], downloadType)
+      } catch (e) {
+        // Fallback: coba download langsung dari quoted message object
+        try {
+          stream = await downloadContentFromMessage(quotedMessage, downloadType)
+        } catch (e2) {
+          // Final fallback: coba build canonical quoted object
+          const canonicalQuoted = { key: { remoteJid: from, id: quotedContext.stanzaId }, message: quotedMessage }
+          stream = await downloadContentFromMessage(canonicalQuoted, downloadType)
+        }
+      }
+    } catch (downloadErr) {
+      console.error("[SAVESTATUS] Download failed:", downloadErr?.message || downloadErr)
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Gagal mengunduh media status. Coba lagi nanti.") }, { quoted: msg })
+      return
+    }
+
+    // Accumulate stream ke buffer
+    let buffer = Buffer.from([])
+    try {
+      for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk])
+    } catch (e) {
+      console.error("[SAVESTATUS] Stream read failed:", e?.message || e)
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Gagal membaca konten media. Coba lagi.") }, { quoted: msg })
+      return
+    }
+
+    if (!buffer || buffer.length === 0) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Konten media kosong atau tidak valid.") }, { quoted: msg })
+      return
+    }
+
+    // Tentukan extension file
+    const mediaNode = quotedMessage[mediaType]
+    const mimeType = mediaNode?.mimetype || ""
+    const getExtFromMime = (m) => {
+      if (!m) return ""
+      if (m.includes("jpeg") || m.includes("jpg")) return ".jpg"
+      if (m.includes("png")) return ".png"
+      if (m.includes("webp")) return ".webp"
+      if (m.includes("mp4") || m.includes("video/mp4")) return ".mp4"
+      if (m.includes("x-matroska") || m.includes("mkv")) return ".mkv"
+      if (m.includes("quicktime")) return ".mov"
+      return mediaType === "imageMessage" ? ".jpg" : (mediaType === "videoMessage" ? ".mp4" : ".bin")
+    }
+
+    let ext = getExtFromMime(mimeType)
+    if (!ext) ext = mediaType === "imageMessage" ? ".jpg" : (mediaType === "videoMessage" ? ".mp4" : ".bin")
+
+    // Buat filename unik
+    const timestamp = Date.now()
+    const randomSuffix = Math.random().toString(36).substring(2, 8)
+    const filename = `status_${timestamp}_${randomSuffix}${ext}`
+    const filepath = path.join(statusFolder, filename)
+
+    // Simpan file
+    try {
+      fs.writeFileSync(filepath, buffer)
+    } catch (writeErr) {
+      console.error("[SAVESTATUS] Write failed:", writeErr?.message || writeErr)
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Gagal menyimpan file. Pastikan bot memiliki akses write.") }, { quoted: msg })
+      return
+    }
+
+    // Kirim ulang media
+    try {
+      if (mediaType === "imageMessage") {
+        await sock.sendMessage(from, {
+          image: buffer,
+          caption: encodeUnicodeText("✅ Status berhasil disimpan dan dikirim ulang.")
+        }, { quoted: msg })
+      } else if (mediaType === "videoMessage") {
+        await sock.sendMessage(from, {
+          video: buffer,
+          caption: encodeUnicodeText("✅ Status berhasil disimpan dan dikirim ulang."),
+          gifPlayback: false
+        }, { quoted: msg })
+      } else {
+        // Document fallback
+        await sock.sendMessage(from, {
+          document: buffer,
+          fileName: filename,
+          mimetype: mimeType || "application/octet-stream"
+        }, { quoted: msg })
+        await sock.sendMessage(from, { text: encodeUnicodeText("✅ Status berhasil disimpan.") }, { quoted: msg })
+      }
+
+      console.log(`[SAVESTATUS] Media saved and sent: ${filepath}`)
+    } catch (sendErr) {
+      console.error("[SAVESTATUS] Send failed:", sendErr?.message || sendErr)
+      await sock.sendMessage(from, { text: encodeUnicodeText(`✅ File disimpan ke: ${filename}\n\n❌ Namun gagal mengirim ulang. Error: ${sendErr?.message || sendErr}`) }, { quoted: msg })
+    }
+    return
+  } catch (err) {
+    console.error("[SAVESTATUS] Error:", err?.message || err)
+    try {
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Terjadi kesalahan: ${err?.message || err}`) }, { quoted: msg })
+    } catch (_) {}
+    return
+  }
+}
 
       // ===============================
       // STICKER - IMAGE TO STICKER
