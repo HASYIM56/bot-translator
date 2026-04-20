@@ -2487,6 +2487,153 @@ if (cmd === ".translate") {
   }
 }
 
+// ===============================
+// TRANSLATE V2 (SLANG/CULTURAL)
+// ===============================
+if (cmd === ".translatev2") {
+  try {
+    // If user asks for list, show supported languages
+    if (args[1] === "list") {
+      try {
+        const langs = Array.isArray(h56SupportedLanguages) && h56SupportedLanguages.length > 0
+          ? h56SupportedLanguages.map(l => `${l.code} — ${l.name}`).join("\n")
+          : getLanguageList() // fallback to existing mapping if package list unavailable
+
+        await sock.sendMessage(from, { text: encodeUnicodeText(`Daftar Bahasa yang Didukung (TranslateV2 - Slang/Budaya):\n\n${langs}`) }, { quoted: msg })
+      } catch (e) {
+        // fallback friendly message
+        await sock.sendMessage(from, { text: encodeUnicodeText("Gagal mengambil daftar bahasa. Coba lagi nanti atau gunakan .translatev2 list sekali lagi.") }, { quoted: msg })
+      }
+      return
+    }
+
+    // Validate args
+    if (args.length < 3) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Format: .translatev2 <kode_target> <teks>\nContoh: .translatev2 en Gokil!\n\nCatatan: TranslateV2 mendukung ekspresi slang & budaya dengan hasil yang lebih natural dan variatif.\n\nGunakan .translatev2 list untuk melihat kode bahasa yang tersedia.") }, { quoted: msg })
+      return
+    }
+
+    const target = args[1].toLowerCase().trim()
+    const textToTranslate = args.slice(2).join(" ").trim()
+
+    if (!textToTranslate) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Teks tidak boleh kosong. Gunakan: .translatev2 <kode_target> <teks>") }, { quoted: msg })
+      return
+    }
+
+    // Validate target language against supported list (best-effort)
+    let isSupported = false
+    try {
+      if (Array.isArray(h56SupportedLanguages)) {
+        isSupported = h56SupportedLanguages.some((l) => String(l.code).toLowerCase() === String(target).toLowerCase())
+      }
+      // fallback check against our TRANSLATE_LANGUAGES map
+      if (!isSupported && TRANSLATE_LANGUAGES[target]) isSupported = true
+    } catch (e) {
+      isSupported = true // be permissive if validation fails unexpectedly
+    }
+
+    if (!isSupported) {
+      await sock.sendMessage(from, { text: encodeUnicodeText(`Kode bahasa '${target}' tidak dikenal. Gunakan .translatev2 list untuk melihat kode yang didukung.`) }, { quoted: msg })
+      return
+    }
+
+    // Inform user we're translating
+    await sock.sendMessage(from, { text: encodeUnicodeText("⏳ Sedang menerjemahkan (mode slang/budaya), mohon tunggu...") }, { quoted: msg })
+
+    // Call h56-translator's translateV2 (dynamic import + destructuring)
+    let result = null
+    try {
+      // Dynamic import to destructure translateV2
+      const h56TranslatorModule = await import("h56-translator")
+      const translateV2Func = h56TranslatorModule.translateV2 || h56TranslatorModule.default?.translateV2
+
+      if (typeof translateV2Func !== "function") {
+        throw new Error("translateV2 function not available in h56-translator module")
+      }
+
+      result = await translateV2Func(textToTranslate, target)
+    } catch (e) {
+      // Fallback: if translateV2 import fails, try requiring as module (backward compat)
+      try {
+        const { translateV2: translateV2Func } = await import("h56-translator")
+        if (typeof translateV2Func === "function") {
+          result = await translateV2Func(textToTranslate, target)
+        } else {
+          throw new Error("translateV2 not found after fallback import")
+        }
+      } catch (e2) {
+        console.error("[TRANSLATEV2] h56-translator import/call threw:", e2?.message || e2)
+        await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Terjadi kesalahan saat menerjemahkan (v2): ${e2?.message || "unknown error"}`) }, { quoted: msg })
+        return
+      }
+    }
+
+    // Normalize result structure (handle both new and error shapes)
+    if (!result) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Tidak menerima respons dari layanan penerjemah v2. Coba lagi nanti.") }, { quoted: msg })
+      return
+    }
+
+    // If serviceStatus present, honor it
+    const svc = result.serviceStatus || (result.raw && result.raw.serviceStatus) || null
+
+    if (svc === "error") {
+      const errObj = result.error || (result.raw && result.raw.error) || {}
+      const code = errObj.code || "error"
+      const message = errObj.message || "Layanan penerjemah v2 mengembalikan error."
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Translate v2 service error: (${code}) ${message}`) }, { quoted: msg })
+      return
+    }
+
+    // Extract translatedText from various result shapes
+    let translatedText = ""
+    let sourceLang = result.sourceLang || (result.raw && result.raw.sourceLang) || ""
+    let targetLang = result.targetLang || target
+
+    if (typeof result === "string") {
+      translatedText = result
+    } else if (result.translatedText) {
+      translatedText = result.translatedText
+    } else if (result.data && result.data.translatedText) {
+      translatedText = result.data.translatedText
+    } else if (result.translation) {
+      translatedText = result.translation
+    } else {
+      // fallback: try to use result.toString()
+      translatedText = String(result || "")
+    }
+
+    if (!translatedText) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Gagal mendapatkan teks terjemahan dari layanan v2. Coba lagi nanti.") }, { quoted: msg })
+      return
+    }
+
+    // Compose professional response
+    let sourceDisplay = sourceLang || "auto"
+    try {
+      // Try to find display name from supported list
+      const sourceName = (Array.isArray(h56SupportedLanguages) && h56SupportedLanguages.find(l => l.code === sourceLang)?.name) || TRANSLATE_LANGUAGES[sourceLang] || sourceDisplay
+      const targetName = (Array.isArray(h56SupportedLanguages) && h56SupportedLanguages.find(l => l.code === targetLang)?.name) || TRANSLATE_LANGUAGES[targetLang] || targetLang
+
+      const out = `🌐 TranslateV2 Result (Slang & Budaya)\nFrom: ${sourceLang || "auto"} ${sourceName ? `— ${sourceName}` : ""}\nTo: ${targetLang} ${targetName ? `— ${targetName}` : ""}\n\n${translatedText}`
+
+      await sock.sendMessage(from, { text: encodeUnicodeText(out) }, { quoted: msg })
+      return
+    } catch (e) {
+      // fallback simple reply
+      await sock.sendMessage(from, { text: encodeUnicodeText(`${translatedText}\n\n(${sourceLang || "auto"} → ${targetLang}) [TranslateV2]`) }, { quoted: msg })
+      return
+    }
+  } catch (err) {
+    console.error("[TRANSLATEV2 HANDLER] Unexpected error:", err?.message || err)
+    try {
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Terjadi kesalahan pada perintah translatev2: ${err?.message || err}`) }, { quoted: msg })
+    } catch (_) {}
+    return
+  }
+}
+
       // ===============================
       // ADD OWNER
       // ===============================
