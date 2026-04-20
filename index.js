@@ -1150,210 +1150,6 @@ try {
 } catch (e) {
   console.warn("[ANTIDELETE] Failed to install improved command handler:", e?.message || e)
 }
-
-// ===============================
-// GROUP FILTER MANAGEMENT (.privategroup / .publicgroup)
-// ===============================
-{
-  const GROUP_FILTER_FILE = path.join(CONFIG_FOLDER, "group-filter.json")
-  
-  // Default structure
-  const DEFAULT_GROUP_FILTER = {
-    privateGroups: [],
-    publicGroups: [],
-    updatedAt: new Date().toISOString(),
-  }
-
-  // Load group filter config
-  const loadGroupFilter = () => {
-    try {
-      if (!fs.existsSync(CONFIG_FOLDER)) fs.mkdirSync(CONFIG_FOLDER, { recursive: true })
-      if (!fs.existsSync(GROUP_FILTER_FILE)) {
-        fs.writeFileSync(GROUP_FILTER_FILE, JSON.stringify(DEFAULT_GROUP_FILTER, null, 2), "utf8")
-        return { ...DEFAULT_GROUP_FILTER }
-      }
-      const raw = fs.readFileSync(GROUP_FILTER_FILE, "utf8") || "{}"
-      const parsed = JSON.parse(raw)
-      return Object.assign({}, DEFAULT_GROUP_FILTER, parsed)
-    } catch (e) {
-      console.warn("[GROUP FILTER] Failed to load config, using defaults:", e?.message || e)
-      return { ...DEFAULT_GROUP_FILTER }
-    }
-  }
-
-  // Save group filter config
-  const saveGroupFilter = (cfg) => {
-    try {
-      if (!fs.existsSync(CONFIG_FOLDER)) fs.mkdirSync(CONFIG_FOLDER, { recursive: true })
-      const toSave = Object.assign({}, DEFAULT_GROUP_FILTER, cfg, { updatedAt: new Date().toISOString() })
-      fs.writeFileSync(GROUP_FILTER_FILE, JSON.stringify(toSave, null, 2), "utf8")
-      return toSave
-    } catch (e) {
-      console.error("[GROUP FILTER] Failed to save config:", e?.message || e)
-      return null
-    }
-  }
-
-  // Check if bot should respond to a group (returns true = respond)
-  const shouldBotRespondToGroup = (groupJid) => {
-    try {
-      if (!groupJid || !String(groupJid).endsWith("@g.us")) return true // private chat, always true
-      const cfg = loadGroupFilter()
-      const groupId = String(groupJid).trim()
-      
-      // If group in privateGroups list, bot does NOT respond
-      if (cfg.privateGroups && cfg.privateGroups.includes(groupId)) return false
-      
-      // If group in publicGroups list, bot ALWAYS responds
-      if (cfg.publicGroups && cfg.publicGroups.includes(groupId)) return true
-      
-      // If not in any list, follow global BOT_ACCESS_MODE
-      // (if global is "private", bot ignores; if "public", bot responds)
-      return BOT_ACCESS_MODE !== "private"
-    } catch (e) {
-      console.warn("[GROUP FILTER] shouldBotRespondToGroup error:", e?.message || e)
-      return true // default: respond (safe fallback)
-    }
-  }
-
-  // Command handler: .privategroup / .publicgroup
-  sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    try {
-      if (type !== "notify") return
-      if (!Array.isArray(messages) || messages.length === 0) return
-
-      const msg = messages[0]
-      if (!msg || !msg.message) return
-      if (msg.key.remoteJid === "status@broadcast") return
-
-      const from = msg.key.remoteJid
-      const isGroup = (from || "").endsWith("@g.us")
-      const sender = isGroup ? msg.key.participant || from : from
-      const senderNumber = String(sender).split("@")[0]
-
-      const isMainOwner = isUserOwner(senderNumber) && normalizeNumber(senderNumber) === normalizeNumber(OWNER_NUMBER)
-      const isOwner = isUserOwner(senderNumber)
-      const isFromBot = msg.key.fromMe === true
-
-      // Respect private mode for command dispatch
-      if (BOT_ACCESS_MODE === "private" && !isMainOwner && !isFromBot) return
-
-      // Extract text
-      const messageType = Object.keys(msg.message)[0]
-      const text =
-        messageType === "conversation"
-          ? msg.message.conversation
-          : messageType === "extendedTextMessage"
-            ? msg.message.extendedTextMessage.text
-            : messageType === "imageMessage"
-              ? msg.message.imageMessage.caption
-              : ""
-
-      if (!text || typeof text !== "string") return
-
-      const args = text.trim().split(/\s+/)
-      const cmd = (args[0] || "").toLowerCase()
-
-      // ============ .privategroup ============
-      if (cmd === ".privategroup") {
-        // Only main owner can configure
-        if (!isMainOwner) {
-          await sock.sendMessage(from, { text: encodeUnicodeText("Khusus Owner Utama: hanya Owner Utama yang dapat mengatur pengaturan grup.") }, { quoted: msg })
-          return
-        }
-
-        // Must be in a group
-        if (!isGroup) {
-          await sock.sendMessage(from, { text: encodeUnicodeText("Perintah ini hanya dapat digunakan di dalam grup.") }, { quoted: msg })
-          return
-        }
-
-        const cfg = loadGroupFilter()
-        const groupId = String(from).trim()
-
-        // Check if already private
-        if (cfg.privateGroups && cfg.privateGroups.includes(groupId)) {
-          await sock.sendMessage(from, { text: encodeUnicodeText("✅ Grup ini sudah diatur menjadi private. Bot tidak akan merespon di grup ini.") }, { quoted: msg })
-          return
-        }
-
-        // Remove from publicGroups if present
-        if (cfg.publicGroups && cfg.publicGroups.includes(groupId)) {
-          cfg.publicGroups = cfg.publicGroups.filter(g => g !== groupId)
-        }
-
-        // Add to privateGroups
-        if (!cfg.privateGroups) cfg.privateGroups = []
-        cfg.privateGroups.push(groupId)
-
-        saveGroupFilter(cfg)
-
-        await sock.sendMessage(from, {
-          text: encodeUnicodeText(
-            "🔒 Grup ini telah diatur menjadi PRIVATE\n\n" +
-            "Bot tidak akan merespon perintah di grup ini sampai Anda menjalankan .publicgroup\n" +
-            "Pesan masuk akan diabaikan secara senyap.\n\n" +
-            "Untuk mengaktifkan kembali: .publicgroup"
-          ),
-        }, { quoted: msg })
-
-        console.log(`[GROUP FILTER] Group ${groupId} set to private by ${senderNumber}`)
-        return
-      }
-
-      // ============ .publicgroup ============
-      if (cmd === ".publicgroup") {
-        // Only main owner can configure
-        if (!isMainOwner) {
-          await sock.sendMessage(from, { text: encodeUnicodeText("Khusus Owner Utama: hanya Owner Utama yang dapat mengatur pengaturan grup.") }, { quoted: msg })
-          return
-        }
-
-        // Must be in a group
-        if (!isGroup) {
-          await sock.sendMessage(from, { text: encodeUnicodeText("Perintah ini hanya dapat digunakan di dalam grup.") }, { quoted: msg })
-          return
-        }
-
-        const cfg = loadGroupFilter()
-        const groupId = String(from).trim()
-
-        // Check if already public
-        if (cfg.publicGroups && cfg.publicGroups.includes(groupId)) {
-          await sock.sendMessage(from, { text: encodeUnicodeText("✅ Grup ini sudah diatur menjadi public. Bot akan selalu merespon di grup ini.") }, { quoted: msg })
-          return
-        }
-
-        // Remove from privateGroups if present
-        if (cfg.privateGroups && cfg.privateGroups.includes(groupId)) {
-          cfg.privateGroups = cfg.privateGroups.filter(g => g !== groupId)
-        }
-
-        // Add to publicGroups
-        if (!cfg.publicGroups) cfg.publicGroups = []
-        cfg.publicGroups.push(groupId)
-
-        saveGroupFilter(cfg)
-
-        await sock.sendMessage(from, {
-          text: encodeUnicodeText(
-            "🔓 Grup ini telah diatur menjadi PUBLIC\n\n" +
-            "Bot akan selalu merespon perintah di grup ini, terlepas dari mode global bot.\n\n" +
-            "Untuk mengubah kembali menjadi private: .privategroup"
-          ),
-        }, { quoted: msg })
-
-        console.log(`[GROUP FILTER] Group ${groupId} set to public by ${senderNumber}`)
-        return
-      }
-
-    } catch (err) {
-      console.error("[GROUP FILTER] Handler error:", err?.message || err)
-    }
-  })
-
-  console.log("[GROUP FILTER] Group filter management installed (.privategroup / .publicgroup).")
-}
   
 // AUTO-REACT
 {
@@ -1749,27 +1545,21 @@ try {
   // MESSAGE HANDLER
   // =============================
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    try {
-      if (type !== "notify") return
+  try {
+    if (type !== "notify") return
 
-      const msg = messages[0]
-      if (!msg.message) return
-      if (msg.key.remoteJid === "status@broadcast") return
+    const msg = messages[0]
+    if (!msg.message) return
+    if (msg.key.remoteJid === "status@broadcast") return
 
-      const from = msg.key.remoteJid
-      const isGroup = from.endsWith("@g.us")
-      const sender = isGroup ? msg.key.participant || from : from
-      const senderNumber = sender.split("@")[0]
+    const from = msg.key.remoteJid
+    const isGroup = from.endsWith("@g.us")
+    const sender = isGroup ? msg.key.participant || from : from
+    const senderNumber = sender.split("@")[0]
 
-      const isMainOwner = isUserOwner(senderNumber) && normalizeNumber(senderNumber) === normalizeNumber(OWNER_NUMBER)
-      const isOwner = isUserOwner(senderNumber)
-      const isFromBot = msg.key.fromMe === true
-
-          
-    if (isGroup && !shouldBotRespondToGroup(from)) {
-      // Group is filtered; ignore silently
-      return
-    }
+    const isMainOwner = isUserOwner(senderNumber) && normalizeNumber(senderNumber) === normalizeNumber(OWNER_NUMBER)
+    const isOwner = isUserOwner(senderNumber)
+    const isFromBot = msg.key.fromMe === true
 
     if (BOT_ACCESS_MODE === "private" && !isMainOwner && !isFromBot) {
       console.log(`[ACCESS MODE] Message from ${senderNumber} ignored (private mode)`)
