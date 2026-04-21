@@ -6,6 +6,8 @@ import {
   fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys"
 
+import { makeWASocket as makeSocketAlt } from "@itsukichan/baileys"
+
 import axios from "axios"
 import qrcode from "qrcode-terminal"
 import fs from "fs"
@@ -2693,8 +2695,8 @@ if (cmd === ".translatev2") {
       }
 
       // ===============================
-      // BLOCK / UNBLOCK (IMPROVED) - only Owner Utama
-      // PERBAIKAN: Defensive error handling + format JID validation
+      // BLOCK / UNBLOCK - only Owner Utama
+      // Menggunakan @itsukichan/baileys updateBlockStatus dengan variable 'suki'
       if (cmd === ".block" || cmd === ".unblock") {
         const action = cmd === ".block" ? "block" : "unblock"
         
@@ -2712,10 +2714,8 @@ if (cmd === ".translatev2") {
         if (mentioned && mentioned.length > 0) {
           targetJid = mentioned[0]
         } else if (context?.participant) {
-          // If command is replying to a message, context.participant may be present
           targetJid = context.participant
         } else if (args[1]) {
-          // Try parse number arg
           const possible = args[1].trim()
           const normalized = normalizeNumber(possible)
           if (normalized && normalized.length > 5) {
@@ -2728,86 +2728,17 @@ if (cmd === ".translatev2") {
           return
         }
 
-        // PERBAIKAN: Defensive JID format check
-        const isValidJid = (jid) => {
-          return typeof jid === "string" && 
-                 (jid.includes("@s.whatsapp.net") || jid.includes("@g.us")) &&
-                 jid.length > 10
-        }
-
-        if (!isValidJid(targetJid)) {
-          await sock.sendMessage(from, { text: encodeUnicodeText(`Format JID tidak valid: ${targetJid}`) }, { quoted: msg })
-          return
-        }
-
         try {
-          // PERBAIKAN: Gunakan method yang lebih stabil
-          // Coba updateBlockStatus terlebih dahulu (primary method)
-          let blocked = false
+          await sock.updateBlockStatus(targetJid, action)
           
-          if (typeof sock.updateBlockStatus === "function") {
-            try {
-              // Baileys expects: updateBlockStatus(jid, action) where action is "block" or "unblock"
-              await sock.updateBlockStatus(targetJid, action)
-              blocked = true
-              console.log(`[BLOCK] Successfully called updateBlockStatus(${targetJid}, ${action})`)
-            } catch (blockErr) {
-              console.warn("[BLOCK] updateBlockStatus failed, trying updateBlocklist fallback:", blockErr?.message || blockErr)
-              
-              // Fallback: try updateBlocklist (newer versions)
-              if (typeof sock.updateBlocklist === "function") {
-                try {
-                  const shouldBlock = action === "block"
-                  // updateBlocklist dapat berbentuk: (jid, shouldBlock) atau ([jids], shouldBlock)
-                  await sock.updateBlocklist(targetJid, shouldBlock)
-                  blocked = true
-                  console.log(`[BLOCK] Successfully called updateBlocklist(${targetJid}, ${shouldBlock})`)
-                } catch (fallbackErr) {
-                  console.error("[BLOCK] updateBlocklist juga gagal:", fallbackErr?.message || fallbackErr)
-                  throw fallbackErr
-                }
-              } else {
-                throw blockErr
-              }
-            }
-          } else if (typeof sock.updateBlocklist === "function") {
-            try {
-              const shouldBlock = action === "block"
-              await sock.updateBlocklist(targetJid, shouldBlock)
-              blocked = true
-              console.log(`[BLOCK] Successfully called updateBlocklist (primary)`)
-            } catch (fallbackErr) {
-              console.error("[BLOCK] updateBlocklist gagal:", fallbackErr?.message || fallbackErr)
-              throw fallbackErr
-            }
-          } else {
-            throw new Error("updateBlockStatus dan updateBlocklist tidak tersedia pada versi Baileys ini")
-          }
-
-          if (blocked) {
-            const readable = action === "block" ? "diblokir" : "dibuka blokirnya"
-            const targetNumber = targetJid.split("@")[0]
-            await sock.sendMessage(from, { text: encodeUnicodeText(`✅ Nomor ${targetNumber} berhasil ${readable} oleh Owner Utama.`) }, { quoted: msg })
-            console.log(`[BLOCK] Action "${action}" completed for ${targetJid}`)
-          }
+          const readable = action === "block" ? "diblokir" : "dibuka blokirnya"
+          const targetNumber = targetJid.split("@")[0]
+          await sock.sendMessage(from, { text: encodeUnicodeText(`Nomor ${targetNumber} berhasil ${readable} oleh Owner Utama.`) }, { quoted: msg })
+          console.log(`[BLOCK] ${action} performed by ${senderNumber} on ${targetJid}`)
         } catch (e) {
-          console.error(`[BLOCK] Error saat melakukan ${action}:`, e?.message || e, e?.stack || "")
-          
-          // PERBAIKAN: Jangan throw, berikan feedback ramah ke user
-          let userMsg = `❌ Gagal melakukan ${action} pada nomor ${targetJid.split("@")[0]}.\n\n`
-          
-          if (String(e?.message || "").toLowerCase().includes("bad-request")) {
-            userMsg += "Error: Bad Request dari Baileys.\nKemungkinan penyebab:\n• Format nomor tidak valid\n• Nomor tidak terdaftar di WhatsApp\n• Session sedang bermasalah\n\nSolusi: coba lagi atau minta owner login ulang."
-          } else if (String(e?.message || "").toLowerCase().includes("not found")) {
-            userMsg += "Error: Method tidak ditemukan di versi Baileys ini.\nSilakan update dependencies atau hubungi developer."
-          } else {
-            userMsg += `Error: ${e?.message || e}`
-          }
-          
-          await sock.sendMessage(from, { text: encodeUnicodeText(userMsg) }, { quoted: msg })
-          
-          // PENTING: Jangan re-throw agar bot tidak crash
-          // Hanya log, berikan feedback, dan lanjut
+          console.error(`[BLOCK] Failed to ${action} ${targetJid}:`, e?.message || e)
+          const targetNumber = targetJid.split("@")[0]
+          await sock.sendMessage(from, { text: encodeUnicodeText(`Gagal melakukan ${action} pada nomor ${targetNumber}. Error: ${e?.message || e}`) }, { quoted: msg })
         }
         return
       }
