@@ -2184,6 +2184,8 @@ ${prefixInfo}
 🌐 Terjemahan
 • .translate <kode> <teks>  — Terjemahkan teks (contoh: .translate en halo)
 • .translate list           — Daftar bahasa yang didukung
+• .translatev2 <kode> <teks>  — Terjemahkan teks (slang/curtural) (contoh: .translate en halo)
+• .translatev2 list           — Daftar bahasa yang didukung
 
 🔒 Fitur Lain
 • .fwd on / .fwd off        — Forward Many Times Mode (Owner Utama)
