@@ -2208,6 +2208,106 @@ Powered by HASYIM56 • Maintain: ${DEV_NAME}
         return
       }
       
+      // ===============================
+// SEND MESSAGE TO NUMBER - .sendmsg
+// ===============================
+// Fitur: Kirim pesan ke nomor WhatsApp tertentu
+// Hanya: Owner Utama + Owner List
+// Usage: .sendmsg <nomor_target> <pesan>
+// Contoh: .sendmsg 081234567890 Halo ini pesan dari bot
+if (cmd === ".sendmsg") {
+  try {
+    // Permission: hanya owner (Owner Utama atau di owners.json)
+    if (!isOwner) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Khusus Owner: hanya owner yang dapat menggunakan perintah .sendmsg.") }, { quoted: msg })
+      return
+    }
+
+    // Validasi argumen
+    if (args.length < 3) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "Format: .sendmsg <nomor_target> <pesan>\n\n" +
+          "Contoh:\n" +
+          ".sendmsg 081234567890 Halo dari bot\n" +
+          ".sendmsg 6281234567890 Ini adalah pesan penting\n\n" +
+          "Catatan:\n" +
+          "• Nomor harus dalam format Indonesia (0812... atau 6281...)\n" +
+          "• Pesan tidak boleh kosong\n" +
+          "• Penerima harus pengguna WhatsApp aktif"
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    // Ekstrak nomor target dan pesan
+    const targetNumberRaw = args[1].trim()
+    const messageText = args.slice(2).join(" ").trim()
+
+    // Validasi pesan
+    if (!messageText) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Pesan tidak boleh kosong.") }, { quoted: msg })
+      return
+    }
+
+    // Normalisasi nomor target
+    const targetNormalized = normalizeNumber(targetNumberRaw)
+    if (!targetNormalized || targetNormalized.length < 10) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "❌ Nomor target tidak valid.\n\n" +
+          "Format yang benar:\n" +
+          "• 081234567890 (format lokal Indonesia)\n" +
+          "• 6281234567890 (format internasional)\n\n" +
+          "Pastikan nomor memiliki minimal 10 digit setelah kode negara."
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    // Bangun target JID
+    const targetJid = `${targetNormalized}@s.whatsapp.net`
+    const targetDisplay = targetNormalized
+
+    // Konfirmasi ke pengirim
+    const confirmationText = `📤 Mengirim pesan ke: +${targetDisplay}\n\n"${messageText}"\n\n⏳ Proses pengiriman...`
+    try {
+      await sock.sendMessage(from, { text: encodeUnicodeText(confirmationText) }, { quoted: msg })
+    } catch (_) {}
+
+    // Kirim pesan ke target nomor
+    try {
+      const sendResult = await sock.sendMessage(targetJid, { text: encodeUnicodeText(messageText) })
+
+      // Laporan sukses ke pengirim
+      const successText = `✅ Pesan berhasil dikirim ke +${targetDisplay}\n\n📝 Isi: "${messageText}"\n⏰ Waktu: ${new Date().toLocaleString("id-ID")}`
+      await sock.sendMessage(from, { text: encodeUnicodeText(successText) }, { quoted: msg })
+
+      // Log ke server
+      console.log(`[SENDMSG] Pesan dikirim oleh ${senderNumber} ke ${targetDisplay}. Isi: "${messageText}"`)
+    } catch (sendError) {
+      // Laporan gagal ke pengirim
+      let errorMsg = "Gagal mengirim pesan. Kemungkinan penyebab:\n"
+      errorMsg += "• Nomor tidak terdaftar di WhatsApp\n"
+      errorMsg += "• Nomor telah memblokir bot\n"
+      errorMsg += "• Koneksi internet tidak stabil\n"
+      errorMsg += "• Sesi bot tidak aktif\n\n"
+      errorMsg += `Error detail: ${sendError?.message || sendError}`
+
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ ${errorMsg}`) }, { quoted: msg })
+
+      console.error(`[SENDMSG] Gagal mengirim ke ${targetDisplay} oleh ${senderNumber}:`, sendError?.message || sendError)
+    }
+    return
+  } catch (err) {
+    console.error("[SENDMSG] Handler error:", err?.message || err)
+    try {
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Terjadi kesalahan: ${err?.message || err}`) }, { quoted: msg })
+    } catch (_) {}
+  }
+  return
+}
+      
       
 if (cmd === ".author") {
   try {
