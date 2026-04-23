@@ -1901,6 +1901,60 @@ try {
         return
       }
       
+// ===============================
+// CREATE CUSTOM TAG - .createcustomtag
+// ===============================
+if (cmd === ".createcustomtag") {
+  try {
+    // Permission: only Owner Utama
+    if (!isMainOwner) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Khusus Owner Utama: hanya Owner Utama yang dapat menggunakan perintah .createcustomtag.") }, { quoted: msg })
+      return
+    }
+
+    // Extract target number from args
+    if (args.length < 2) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("Format: .createcustomtag <nomor>\nContoh: .createcustomtag 6281234567890 atau .createcustomtag 081234567890") }, { quoted: msg })
+      return
+    }
+
+    const targetNumberRaw = args[1].trim()
+    const normalizedTarget = normalizeNumber(targetNumberRaw)
+
+    // Validate number
+    if (!normalizedTarget || normalizedTarget.length < 10) {
+      await sock.sendMessage(from, { text: encodeUnicodeText("❌ Nomor tidak valid. Format yang benar:\n• 081234567890 (format lokal Indonesia)\n• 6281234567890 (format internasional)") }, { quoted: msg })
+      return
+    }
+
+    // Build JID for the target
+    const targetJid = `${normalizedTarget}@s.whatsapp.net`
+    const displayNumber = normalizedTarget
+
+    // Send message with mention
+    try {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(`@${displayNumber}`),
+        mentions: [targetJid],
+      }, { quoted: msg })
+
+      console.log(`[CREATECUSTOMTAG] Custom tag sent to ${from} by ${senderNumber} targeting ${displayNumber}`)
+    } catch (sendErr) {
+      console.error("[CREATECUSTOMTAG] Failed to send custom tag:", sendErr?.message || sendErr)
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Gagal mengirim custom tag. Error: ${sendErr?.message || sendErr}`) }, { quoted: msg })
+    }
+
+    return
+  } catch (err) {
+    console.error("[CREATECUSTOMTAG] Error:", err?.message || err)
+    try {
+      await sock.sendMessage(from, { text: encodeUnicodeText(`❌ Terjadi kesalahan: ${err?.message || err}`) }, { quoted: msg })
+    } catch (_) {}
+  }
+  return
+}
+
+      
       // ===============================
 // GET GROUP LINK - .getlinkgroup
 // ===============================
@@ -2168,6 +2222,7 @@ ${prefixInfo}
 • .deletemsg (reply)  — Hapus pesan yang direply (Owner, bot admin)
 • .block <reply|@nomor|nomor>   — Blokir nomor (HANYA Owner Utama)
 • .unblock <reply|@nomor|nomor> — Buka blokir nomor (HANYA Owner Utama)
+• .createcustomtag <62xxx> — custom tag (HANYA Owner Utama)
 
 🎨 Stiker & Media
 • .stiker (reply gambar)    — Ubah gambar menjadi stiker (format: JPEG/PNG/WEBP)
