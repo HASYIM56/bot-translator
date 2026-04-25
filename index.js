@@ -2223,6 +2223,7 @@ ${prefixInfo}
 • .block <reply|@nomor|nomor>   — Blokir nomor (HANYA Owner Utama)
 • .unblock <reply|@nomor|nomor> — Buka blokir nomor (HANYA Owner Utama)
 • .createcustomtag <62xxx> — custom tag (HANYA Owner Utama)
+• .joingroup <group_link> — Ajak bot bergabung ke grup (Owner Utama)
 
 🎨 Stiker & Media
 • .stiker (reply gambar)    — Ubah gambar menjadi stiker (format: JPEG/PNG/WEBP)
@@ -2262,6 +2263,161 @@ Powered by HASYIM56 • Maintain: ${DEV_NAME}
         )
         return
       }
+      
+      // ===============================
+// JOIN GROUP - .joingroup
+// ===============================
+if (cmd === ".joingroup") {
+  try {
+    // Permission: Only Owner Utama
+    if (!isMainOwner) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText("Khusus Owner Utama: hanya Owner Utama yang dapat menggunakan perintah .joingroup."),
+      }, { quoted: msg })
+      return
+    }
+
+    // Validate argument
+    if (args.length < 2) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "Format: .joingroup <group_link>\n\n" +
+          "Contoh:\n" +
+          ".joingroup https://chat.whatsapp.com/XXXXXX\n\n" +
+          "Catatan:\n" +
+          "• Bot akan mencoba bergabung ke grup menggunakan link yang diberikan.\n" +
+          "• Jika grup memiliki peraturan (require approval), bot akan meminta persetujuan.\n" +
+          "• Tunggu hingga admin grup menyetujui, atau jika auto-accept bot akan langsung masuk."
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    const groupLink = args.slice(1).join("").trim()
+
+    // Validate link format
+    if (!groupLink.includes("chat.whatsapp.com")) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "❌ Link grup tidak valid.\n\n" +
+          "Format yang benar:\n" +
+          "https://chat.whatsapp.com/XXXXXX\n\n" +
+          "Pastikan Anda menyalin link dengan benar dari WhatsApp."
+        ),
+      }, { quoted: msg })
+      return
+    }
+
+    // Extract group code from link
+    // Format: https://chat.whatsapp.com/XXXXXX atau chat.whatsapp.com/XXXXXX
+    let groupCode = null
+    try {
+      const urlMatch = groupLink.match(/chat\.whatsapp\.com\/([a-zA-Z0-9_-]+)/)
+      if (urlMatch && urlMatch[1]) {
+        groupCode = urlMatch[1]
+      } else {
+        throw new Error("Tidak dapat mengekstrak kode grup dari link")
+      }
+    } catch (e) {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(`❌ Gagal mengekstrak kode grup. Error: ${e.message}`),
+      }, { quoted: msg })
+      return
+    }
+
+    // Inform user
+    await sock.sendMessage(from, {
+      text: encodeUnicodeText(`⏳ Bot sedang mencoba bergabung ke grup...\nKode: ${groupCode}\n\nMohon tunggu...`),
+    }, { quoted: msg })
+
+    // Attempt to join group
+    let joinResult = null
+    let joinError = null
+
+    try {
+      // Try groupAcceptInvite (most compatible with newer Baileys)
+      if (typeof sock.groupAcceptInvite === "function") {
+        console.log(`[JOINGROUP] Attempting groupAcceptInvite with code: ${groupCode}`)
+        joinResult = await sock.groupAcceptInvite(groupCode)
+        console.log(`[JOINGROUP] groupAcceptInvite result:`, joinResult)
+      } else if (typeof sock.groupAcceptInviteV4 === "function") {
+        // Fallback to V4 variant (older Baileys)
+        console.log(`[JOINGROUP] Attempting groupAcceptInviteV4 with code: ${groupCode}`)
+        joinResult = await sock.groupAcceptInviteV4(groupCode)
+        console.log(`[JOINGROUP] groupAcceptInviteV4 result:`, joinResult)
+      } else {
+        throw new Error("Fungsi bergabung grup tidak tersedia di versi Baileys saat ini")
+      }
+    } catch (err) {
+      joinError = err
+      console.error(`[JOINGROUP] Failed to join group:`, err?.message || err)
+    }
+
+    // Process result
+    if (joinError) {
+      const errorMsg = (joinError?.message || String(joinError)).toLowerCase()
+
+      // Helpful error messages based on common failure reasons
+      let friendlyError = "Gagal bergabung ke grup. Coba lagi nanti atau periksa link grup."
+
+      if (errorMsg.includes("invalid") || errorMsg.includes("expired")) {
+        friendlyError = "Link grup sudah kadaluarsa atau tidak valid. Minta link grup yang baru dari admin."
+      } else if (errorMsg.includes("not found") || errorMsg.includes("404")) {
+        friendlyError = "Grup tidak ditemukan. Pastikan link benar dan grup masih aktif."
+      } else if (errorMsg.includes("join")) {
+        friendlyError = "Bot tidak dapat bergabung. Kemungkinan: link sudah expired, bot sudah di grup, atau ada pembatasan dari grup."
+      } else if (errorMsg.includes("unauthorized") || errorMsg.includes("permission")) {
+        friendlyError = "Bot tidak memiliki izin untuk bergabung ke grup. Periksa pengaturan grup."
+      } else if (errorMsg.includes("session")) {
+        friendlyError = "Sesi bot tidak valid. Coba logout dan login ulang."
+      }
+
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(`❌ ${friendlyError}\n\nError teknis: ${String(joinError?.message || joinError).substring(0, 100)}`),
+      }, { quoted: msg })
+      return
+    }
+
+    // Success
+    if (joinResult) {
+      const gid = joinResult.gid || joinResult.id || joinResult
+
+      const successMsg = `✅ Bot berhasil bergabung ke grup!\n\n` +
+        `ID Grup: ${gid || "(tersimpan otomatis)"}\n` +
+        `Waktu: ${new Date().toLocaleString("id-ID")}\n\n` +
+        `📌 Bot sekarang siap melayani di grup ini.\n` +
+        `Ketik .menu untuk melihat daftar perintah.`
+
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(successMsg),
+      }, { quoted: msg })
+
+      console.log(`[JOINGROUP] Successfully joined group: ${gid || groupCode} by Owner ${senderNumber}`)
+    } else {
+      // joinResult is null/undefined but no error thrown (unusual)
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(
+          "⚠️ Bot mengeksekusi perintah bergabung, tetapi tidak ada konfirmasi hasil.\n\n" +
+          "Kemungkinan:\n" +
+          "• Bot sudah berada di grup ini.\n" +
+          "• Grup memerlukan persetujuan admin (menunggu approval).\n" +
+          "• Cek grup untuk memastikan bot telah bergabung."
+        ),
+      }, { quoted: msg })
+      console.log(`[JOINGROUP] No explicit result for group code: ${groupCode}`)
+    }
+
+    return
+  } catch (err) {
+    console.error("[JOINGROUP] Unexpected error:", err?.message || err)
+    try {
+      await sock.sendMessage(from, {
+        text: encodeUnicodeText(`❌ Terjadi kesalahan saat memproses .joingroup: ${err?.message || err}`),
+      }, { quoted: msg })
+    } catch (_) {}
+  }
+  return
+}
       
       // ===============================
 // SEND MESSAGE TO NUMBER - .sendmsg
