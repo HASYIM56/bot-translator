@@ -2,5 +2,7 @@ session/
 node_modules/
 env/
 session/
+session_archives/
 node_modules/
 config/
+downloads/

@@ -6,14 +6,12 @@ import {
   fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys"
 
-import { makeWASocket as makeSocketAlt } from "@itsukichan/baileys"
 
 import axios from "axios"
 import qrcode from "qrcode-terminal"
 import fs from "fs"
 import Pino from "pino"
 import sharp from "sharp"
-import { translate as h56Translate, supportedLanguages as h56SupportedLanguages } from "h56-translator"
 import { generateQRCode, base64ToBuffer } from "./qrcode.js"
 
 import path from "path"
@@ -30,6 +28,8 @@ import startRealtimeBioUpdater from "./realtime-bio.js"
 import githubSearchHandler from "./handlers/githubSearch.js"
 // urltopdf Handler
 import urlToPdfHandler from "./handlers/urlToPdf.js"
+// Media Auto-Save System
+import registerMediaAutoSave from "./mediaAutoSave.js"
 
 // ======================
 // SYSTEM CONFIG
@@ -906,6 +906,19 @@ async function integrateBlockModule(sock) {
 
   // REGISTER MEDIAFIRE HANDLER
   await registerMediafire(sock, { getAccessMode: () => BOT_ACCESS_MODE, isUserOwner, normalizeNumber, OWNER_NUMBER, TEMP_FOLDER, MAX_DOWNLOAD_SIZE: 150 * 1024 * 1024 })
+
+  // =============================
+// MEDIA AUTO-SAVE SYSTEM
+// =============================
+try {
+  registerMediaAutoSave(sock, {
+    enabled: true,
+    logger: console,
+  })
+  console.log("[MEDIA AUTO-SAVE] System initialized")
+} catch (err) {
+  console.error("[MEDIA AUTO-SAVE] Failed to initialize:", err?.message || err)
+}
 
 // ANTI-DELETE
 try {
