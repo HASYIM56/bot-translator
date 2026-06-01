@@ -914,10 +914,11 @@ try {
   registerMediaAutoSave(sock, {
     enabled: true,
     logger: console,
+    includeBotMessages: true, // Termasuk pesan dari bot user sendiri
   })
-  console.log("[MEDIA AUTO-SAVE] System initialized")
+  console.log("[MEDIA SAVE] Media auto-save system started")
 } catch (err) {
-  console.error("[MEDIA AUTO-SAVE] Failed to initialize:", err?.message || err)
+  console.error("[MEDIA SAVE] Failed to initialize:", err?.message || err)
 }
 
 // ANTI-DELETE

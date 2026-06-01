@@ -1,213 +1,254 @@
+// File: mediaAutoSave.js
 import fs from "fs"
 import path from "path"
-import { fileURLToPath } from "url"
-import { downloadMediaMessage } from "@whiskeysockets/baileys"
+import { downloadContentFromMessage } from "@whiskeysockets/baileys"
 
-// Get directory name (untuk ESM modules)
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const BASE_MEDIA_DIR = path.join(path.sep, "HASYIM56")
+const MEDIA_SAVE_DIR = path.join(BASE_MEDIA_DIR, "auto_save")
 
-// Folder struktur untuk menyimpan media
-const BASE_SAVE_DIR = path.join(__dirname, "downloads")
+// Media type mapping to folder names
 const MEDIA_FOLDERS = {
   imageMessage: "images",
   videoMessage: "videos",
   audioMessage: "audios",
   documentMessage: "documents",
   stickerMessage: "stickers",
-  unknownMessage: "unknown",
+  ephemeralMessage: "ephemeral",
+  viewOnceMessage: "viewonce",
+  viewOnceMessageV2: "viewonce_v2",
+  pttMessage: "voice_notes",
+  quotedMessage: "quoted",
 }
 
-// Ensure base downloads folder exists
-const ensureDownloadsFolder = () => {
+// Initialize folder structure
+const initializeFolders = () => {
   try {
-    if (!fs.existsSync(BASE_SAVE_DIR)) {
-      fs.mkdirSync(BASE_SAVE_DIR, { recursive: true })
+    if (!fs.existsSync(MEDIA_SAVE_DIR)) {
+      fs.mkdirSync(MEDIA_SAVE_DIR, { recursive: true })
+      console.log(`[MEDIA SAVE] Created base directory: ${MEDIA_SAVE_DIR}`)
     }
-    // Ensure semua subfolder ada
-    Object.values(MEDIA_FOLDERS).forEach((folder) => {
-      const folderPath = path.join(BASE_SAVE_DIR, folder)
+
+    // Create all media type subdirectories
+    for (const folderName of Object.values(MEDIA_FOLDERS)) {
+      const folderPath = path.join(MEDIA_SAVE_DIR, folderName)
       if (!fs.existsSync(folderPath)) {
         fs.mkdirSync(folderPath, { recursive: true })
+        console.log(`[MEDIA SAVE] Created subfolder: ${folderPath}`)
       }
-    })
-  } catch (e) {
-    console.warn("[MEDIA AUTO-SAVE] Failed to ensure downloads folder structure:", e?.message || e)
+    }
+  } catch (err) {
+    console.error("[MEDIA SAVE] Failed to initialize folders:", err?.message || err)
   }
 }
 
-// Helper: normalize pesan untuk handle ephemeralMessage, viewOnceMessage, dll
-const normalizeMessage = (msg) => {
-  if (!msg) return null
-  if (msg.ephemeralMessage?.message) return msg.ephemeralMessage.message
-  if (msg.viewOnceMessage?.message) return msg.viewOnceMessage.message
-  if (msg.viewOnceMessageV2?.message) return msg.viewOnceMessageV2.message
-  if (msg.viewOnceMessageV2Extension?.message) return msg.viewOnceMessageV2Extension.message
-  return msg
-}
-
-// Helper: deteksi tipe media
-const getMediaType = (messageObj) => {
-  if (!messageObj) return null
-  const messageType = Object.keys(messageObj)[0]
-  return messageType || null
-}
-
-// Helper: ambil extension dari message atau tipe
-const getFileExtension = (messageType, messageObj) => {
-  const mediaObj = messageObj?.[messageType]
-
-  switch (messageType) {
-    case "imageMessage":
-      return mediaObj?.mimetype?.includes("webp") ? ".webp" : ".jpg"
-    case "videoMessage":
-      return ".mp4"
-    case "audioMessage":
-      // Voice note atau audio file
-      return mediaObj?.mimetype?.includes("ogg") || mediaObj?.ptt ? ".ogg" : ".m4a"
-    case "documentMessage":
-      // Gunakan extension dari nama file jika ada
-      if (mediaObj?.fileName) {
-        const ext = path.extname(mediaObj.fileName)
-        return ext || ".bin"
-      }
-      return ".bin"
-    case "stickerMessage":
-      return ".webp"
-    default:
-      return ".bin"
-  }
-}
-
-// Helper: sanitize filename
-const sanitizeFilename = (filename) => {
-  if (!filename) return `file_${Date.now()}`
-  // Hapus path separator dan karakter ilegal
-  return filename
-    .replace(/[/\\?%*:|"<>]/g, "_")
-    .slice(0, 180)
-    .trim() || `file_${Date.now()}`
-}
-
-// Helper: generate unique filename
-const generateFilename = (messageType, originalName = null) => {
-  const timestamp = Date.now()
-  const randomSuffix = Math.random().toString(36).substring(2, 8)
-
-  if (originalName) {
-    const sanitized = sanitizeFilename(originalName)
-    return `${timestamp}_${randomSuffix}_${sanitized}`
-  }
-
-  return `${messageType}_${timestamp}_${randomSuffix}`
-}
-
-// Main function: download dan simpan media
-const saveMediaToDisk = async (sock, fullMessage, mediaBuffer = null) => {
+// Detect file extension based on MIME type or magic bytes
+const detectFileExtension = (buffer, mimeType = "") => {
   try {
-    // Normalize message (handle ephemeralMessage, viewOnceMessage, dll)
-    let messageObj = normalizeMessage(fullMessage.message)
-    if (!messageObj) {
-      console.warn("[MEDIA AUTO-SAVE] Could not normalize message object")
-      return false
+    if (!buffer || buffer.length < 4) return ".bin"
+
+    // Check magic bytes / file signatures
+    const magic = buffer.slice(0, 12)
+
+    // MIME type based detection
+    if (mimeType) {
+      if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return ".jpg"
+      if (mimeType.includes("png")) return ".png"
+      if (mimeType.includes("webp")) return ".webp"
+      if (mimeType.includes("gif")) return ".gif"
+      if (mimeType.includes("mp4")) return ".mp4"
+      if (mimeType.includes("mpeg")) return ".mp3"
+      if (mimeType.includes("ogg")) return ".ogg"
+      if (mimeType.includes("wav")) return ".wav"
+      if (mimeType.includes("m4a")) return ".m4a"
+      if (mimeType.includes("pdf")) return ".pdf"
+      if (mimeType.includes("zip") || mimeType.includes("rar")) return ".zip"
     }
 
-    // Deteksi tipe media
-    const mediaType = getMediaType(messageObj)
-    if (!mediaType || !MEDIA_FOLDERS[mediaType]) {
-      // Bukan media type yang kami track
-      return false
-    }
+    // Magic byte detection
+    if (magic[0] === 0xff && magic[1] === 0xd8) return ".jpg" // JPG
+    if (magic[0] === 0x89 && magic[1] === 0x50) return ".png" // PNG
+    if (magic[0] === 0x52 && magic[1] === 0x49 && magic[2] === 0x46 && magic[3] === 0x46) return ".wav" // WAV/RIFF
+    if (magic[0] === 0x49 && magic[1] === 0x44 && magic[2] === 0x33) return ".mp3" // MP3 ID3
+    if (magic[0] === 0xff && (magic[1] === 0xfb || magic[1] === 0xf3)) return ".mp3" // MP3 raw
+    if (magic[0] === 0x4f && magic[1] === 0x67 && magic[2] === 0x67) return ".ogg" // OGG
+    if (magic[0] === 0x52 && magic[1] === 0x49 && magic[2] === 0x46 && magic[3] === 0x46 && buffer.slice(8, 12).toString() === "WEBP") return ".webp" // WEBP
+    if (magic[0] === 0x47 && magic[1] === 0x49 && magic[2] === 0x46) return ".gif" // GIF
+    if (magic[0] === 0x25 && magic[1] === 0x50 && magic[2] === 0x44 && magic[3] === 0x46) return ".pdf" // PDF
+    if (magic[0] === 0x50 && magic[1] === 0x4b) return ".zip" // ZIP/DOCX
+    if (magic[0] === 0x1f && magic[1] === 0x8b) return ".gz" // GZIP
 
-    // Skip jika tipe tidak relevan
-    if (mediaType === "unknownMessage") {
-      return false
-    }
+    // fallback
+    return ".bin"
+  } catch (e) {
+    console.warn("[MEDIA SAVE] Extension detection failed:", e?.message || e)
+    return ".bin"
+  }
+}
 
-    // Tentukan folder tujuan
-    const folderName = MEDIA_FOLDERS[mediaType]
-    const savePath = path.join(BASE_SAVE_DIR, folderName)
+// Normalize date string for folder organization
+const getDateFolder = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, "0")
+  const day = String(now.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
 
-    // Ensure folder exists
+// Generate unique filename
+const generateFilename = (originalName = "", extension = ".bin") => {
+  const timestamp = Date.now()
+  const random = Math.random().toString(36).substring(2, 8)
+  const sanitized = originalName
+    ? originalName.replace(/[^a-zA-Z0-9.-]/g, "_").substring(0, 50)
+    : `media_${timestamp}`
+  return `${sanitized}_${timestamp}_${random}${extension}`
+}
+
+// Download and save media
+const downloadAndSaveMedia = async (sock, messageNode, mediaType, mediaObject, sender, remoteJid) => {
+  try {
+    // Determine download type and folder
+    const folderName = MEDIA_FOLDERS[mediaType] || "unknown"
+    const mimeType = mediaObject?.mimetype || ""
+    
+    // Infer download type
+    let downloadType = "buffer"
+    if (mediaType === "imageMessage" || mediaType === "stickerMessage") downloadType = "image"
+    else if (mediaType === "videoMessage") downloadType = "video"
+    else if (mediaType === "audioMessage" || mediaType === "pttMessage") downloadType = "audio"
+    else if (mediaType === "documentMessage") downloadType = "document"
+
+    // Download stream
+    let stream
     try {
-      if (!fs.existsSync(savePath)) {
-        fs.mkdirSync(savePath, { recursive: true })
-      }
-    } catch (e) {
-      console.error(`[MEDIA AUTO-SAVE] Failed to ensure ${folderName} folder:`, e?.message || e)
-      return false
+      stream = await downloadContentFromMessage(mediaObject, downloadType)
+    } catch (downloadErr) {
+      console.warn(`[MEDIA SAVE] Failed to create download stream for ${mediaType}:`, downloadErr?.message || downloadErr)
+      return null
     }
 
-    // Download media jika belum ada buffer
-    let buffer = mediaBuffer
-    if (!buffer) {
-      try {
-        buffer = await downloadMediaMessage(
-          fullMessage,
-          "buffer",
-          {},
-          {
-            logger: null, // silent logger
-            reuploadRequest: sock.updateMediaMessage,
-          }
-        )
-      } catch (downloadErr) {
-        console.warn(`[MEDIA AUTO-SAVE] Failed to download ${mediaType}:`, downloadErr?.message || downloadErr)
-        return false
+    if (!stream) {
+      console.warn(`[MEDIA SAVE] No download stream available for ${mediaType}`)
+      return null
+    }
+
+    // Accumulate buffer from stream
+    let buffer = Buffer.from([])
+    try {
+      for await (const chunk of stream) {
+        buffer = Buffer.concat([buffer, chunk])
+        // Safety: limit to 100MB per file
+        if (buffer.length > 100 * 1024 * 1024) {
+          console.warn(`[MEDIA SAVE] Media exceeded 100MB limit for ${mediaType}, truncating`)
+          break
+        }
       }
+    } catch (streamErr) {
+      console.warn(`[MEDIA SAVE] Error reading stream for ${mediaType}:`, streamErr?.message || streamErr)
+      return null
     }
 
     if (!buffer || buffer.length === 0) {
-      console.warn("[MEDIA AUTO-SAVE] Downloaded buffer is empty")
-      return false
+      console.warn(`[MEDIA SAVE] Downloaded buffer is empty for ${mediaType}`)
+      return null
     }
 
-    // Tentukan nama file
-    const mediaObj = messageObj[mediaType]
-    let originalFilename = null
+    // Detect extension
+    const extension = detectFileExtension(buffer, mimeType)
 
-    // Coba ambil nama dari berbagai sumber
-    if (mediaObj?.fileName) {
-      originalFilename = mediaObj.fileName
-    } else if (mediaObj?.caption) {
-      originalFilename = mediaObj.caption.slice(0, 50).replace(/[/\\?%*:|"<>]/g, "_")
-    } else if (mediaType === "documentMessage" && mediaObj?.title) {
-      originalFilename = mediaObj.title
-    }
+    // Generate filename
+    const originalName = mediaObject?.fileName || mediaObject?.filename || ""
+    const filename = generateFilename(originalName, extension)
 
-    const ext = getFileExtension(mediaType, messageObj)
-    const baseFilename = generateFilename(mediaType, originalFilename)
-    const finalFilename = baseFilename.endsWith(ext) ? baseFilename : `${baseFilename}${ext}`
-    const fullPath = path.join(savePath, finalFilename)
+    // Create date-based subfolder
+    const dateFolder = getDateFolder()
+    const senderFolder = String(sender).replace(/[^0-9]/g, "")
+    const folderPath = path.join(MEDIA_SAVE_DIR, folderName, dateFolder, senderFolder)
 
-    // Simpan file
+    // Ensure folder exists
     try {
-      fs.writeFileSync(fullPath, buffer)
-      console.log(`[MEDIA AUTO-SAVE] Saved ${mediaType} to: ${fullPath} (${(buffer.length / 1024).toFixed(2)} KB)`)
-      return true
+      if (!fs.existsSync(folderPath)) {
+        fs.mkdirSync(folderPath, { recursive: true })
+      }
+    } catch (mkdirErr) {
+      console.error(`[MEDIA SAVE] Failed to create directory ${folderPath}:`, mkdirErr?.message || mkdirErr)
+      return null
+    }
+
+    // Write file
+    const filepath = path.join(folderPath, filename)
+    try {
+      fs.writeFileSync(filepath, buffer)
+      console.log(`[MEDIA SAVE] Saved ${mediaType}: ${filepath} (${(buffer.length / 1024).toFixed(2)} KB)`)
+      return {
+        success: true,
+        filepath,
+        size: buffer.length,
+        mediaType,
+        extension,
+        sender,
+        timestamp: Date.now(),
+      }
     } catch (writeErr) {
-      console.error(`[MEDIA AUTO-SAVE] Failed to write file ${fullPath}:`, writeErr?.message || writeErr)
-      return false
+      console.error(`[MEDIA SAVE] Failed to write file ${filepath}:`, writeErr?.message || writeErr)
+      return null
     }
   } catch (err) {
-    console.error("[MEDIA AUTO-SAVE] Unexpected error:", err?.message || err)
-    return false
+    console.error("[MEDIA SAVE] Unexpected error in downloadAndSaveMedia:", err?.message || err)
+    return null
   }
 }
 
-// Main export: registrasi handler ke Baileys socket
-export default function registerMediaAutoSave(sock, options = {}) {
-  const { enabled = true, logger = console } = options
-
-  if (!enabled) {
-    logger.log("[MEDIA AUTO-SAVE] Disabled by configuration")
-    return
-  }
-
-  // Ensure downloads folder structure
-  ensureDownloadsFolder()
-
-  // Registrasi event listener
+// Normalize message object to handle ephemeral/viewOnce messages
+const normalizeMessage = (message) => {
   try {
+    if (!message) return null
+
+    // Handle ephemeral messages
+    if (message.ephemeralMessage?.message) {
+      return message.ephemeralMessage.message
+    }
+
+    // Handle view-once messages (V2)
+    if (message.viewOnceMessageV2?.message) {
+      return message.viewOnceMessageV2.message
+    }
+
+    // Handle view-once messages (V1)
+    if (message.viewOnceMessage?.message) {
+      return message.viewOnceMessage.message
+    }
+
+    return message
+  } catch (e) {
+    console.warn("[MEDIA SAVE] Error normalizing message:", e?.message || e)
+    return message
+  }
+}
+
+// Main handler: register media auto-save
+const registerMediaAutoSave = (sock, opts = {}) => {
+  try {
+    const {
+      enabled = true,
+      logger = console,
+      includeBotMessages = true, // Include messages sent by the bot itself
+    } = opts
+
+    if (!enabled) {
+      console.log("[MEDIA SAVE] Media auto-save is disabled")
+      return
+    }
+
+    // Initialize folders on startup
+    initializeFolders()
+
+    // Register listener
+    if (!sock.ev || typeof sock.ev.on !== "function") {
+      console.warn("[MEDIA SAVE] Socket event emitter not available")
+      return
+    }
+
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       try {
         if (type !== "notify") return
@@ -215,32 +256,54 @@ export default function registerMediaAutoSave(sock, options = {}) {
 
         for (const msg of messages) {
           try {
-            // Skip jika tidak ada message
-            if (!msg || !msg.message) continue
+            if (!msg || !msg.key || !msg.message) continue
 
-            // Skip status broadcasts
+            // Skip status updates
             if (msg.key.remoteJid === "status@broadcast") continue
 
-            // Skip own messages (optional - hapus kondisi ini jika ingin simpan juga message bot sendiri)
-            if (msg.key.fromMe) continue
+            // Extract sender information
+            const from = msg.key.remoteJid
+            const isGroup = String(from || "").endsWith("@g.us")
+            const sender = isGroup ? msg.key.participant || from : from
+            const isFromBot = msg.key.fromMe === true
 
-            // Proses simpan media
-            await saveMediaToDisk(sock, msg)
+            // Skip own messages if includeBotMessages is false
+            if (isFromBot && !includeBotMessages) continue
+
+            // Normalize message (handle ephemeral, viewOnce, etc)
+            const normalizedMsg = normalizeMessage(msg.message)
+            if (!normalizedMsg) continue
+
+            // Get all media types in this message
+            const mediaTypes = Object.keys(normalizedMsg)
+
+            for (const mediaType of mediaTypes) {
+              // Check if it's a supported media type
+              if (!MEDIA_FOLDERS[mediaType]) continue
+
+              const mediaObject = normalizedMsg[mediaType]
+              if (!mediaObject) continue
+
+              // Download and save
+              const result = await downloadAndSaveMedia(sock, msg, mediaType, mediaObject, sender, from)
+
+              if (result) {
+                logger?.log?.(`[MEDIA SAVE] Successfully saved ${mediaType} from ${String(sender).split("@")[0]}`)
+              }
+            }
           } catch (msgErr) {
-            console.warn("[MEDIA AUTO-SAVE] Error processing individual message:", msgErr?.message || msgErr)
-            // Continue ke message berikutnya
+            logger?.warn?.(`[MEDIA SAVE] Error processing individual message:`, msgErr?.message || msgErr)
           }
         }
-      } catch (handlerErr) {
-        console.error("[MEDIA AUTO-SAVE] Handler error:", handlerErr?.message || handlerErr)
+      } catch (upsertErr) {
+        logger?.error?.("[MEDIA SAVE] Error in messages.upsert handler:", upsertErr?.message || upsertErr)
       }
     })
 
-    logger.log("[MEDIA AUTO-SAVE] Handler registered successfully. Media will be auto-saved to ./downloads/")
-  } catch (e) {
-    logger.error("[MEDIA AUTO-SAVE] Failed to register handler:", e?.message || e)
+    console.log("[MEDIA SAVE] Auto-save system initialized and listening for media")
+  } catch (err) {
+    console.error("[MEDIA SAVE] Failed to register media auto-save:", err?.message || err)
   }
 }
 
-// Export helper functions untuk keperluan manual save jika dibutuhkan
-export { saveMediaToDisk, ensureDownloadsFolder, BASE_SAVE_DIR, MEDIA_FOLDERS }
+export default registerMediaAutoSave
